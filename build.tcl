@@ -13,17 +13,37 @@ if {$argc >= 2} {
     set controller ""
 }
 
+# EXACT LOCK (2026-09-23): <board>_exact builds the same board with the HDMI clocks an
+# exact rational multiple of the SNES master clock, so the 16/32-line buffer and the
+# per-frame SNES pause (pause_snes_for_frame_sync) go away. See src/snes2hdmi_sd.v,
+# src/plla/pll_snes_exact.v, src/pllr/pll_hdmi_nano_exact.v, hdmi2 modes 203/204.
+# The stock targets are untouched.
+set exact 0
+if {[string match "*_exact" $dev]} {
+    set exact 1
+    set dev [string range $dev 0 end-6]
+    if {$dev ne "nano20k" && $controller eq ""} { set controller "ds2" }
+    if {[lsearch {nano20k primer25k console60k} $dev] < 0} { error "no exact-lock target for $dev" }
+    # first, so EXACT_LOCK is defined before anything else is analysed
+    add_file -type verilog "src/config_exact.v"
+}
+
 # process $dev and $controller
 if {$dev eq "nano20k"} {
     set_device GW2AR-LV18QN88C8/I7 -device_version C
     add_file src/boards/nano20k.v
-    add_file -type verilog "src/snes2hdmi_nano.v"
     add_file -type cst "src/boards/nano20k.cst"
-    add_file -type verilog "src/pllr/gowin_pll_hdmi.v"
+    if {$exact} {
+        add_file -type verilog "src/snes2hdmi_sd.v"
+        add_file -type verilog "src/pllr/pll_hdmi_nano_exact.v"
+    } else {
+        add_file -type verilog "src/snes2hdmi_nano.v"
+        add_file -type verilog "src/pllr/gowin_pll_hdmi.v"
+    }
     add_file -type verilog "src/pllr/gowin_pll_snes.v"
     add_file -type verilog "src/sdram_nano.v"
     # nano20k supports both controllers simultaneously
-    set_option -output_base_name snestang_${dev}
+    if {$exact} { set_option -output_base_name snestang_${dev}_exact } else { set_option -output_base_name snestang_${dev} }
 } elseif {$dev eq "primer25k"} {
     set_device GW5A-LV25MG121NC1/I0 -device_version A
     if {$controller eq "snes"} {
@@ -35,14 +55,19 @@ if {$dev eq "nano20k"} {
     } else {
         error "Unknown controller $controller"
     }
-    add_file -type verilog "src/snes2hdmi.v"
-    add_file -type verilog "src/plla/gowin_pll_27.v"
-    add_file -type verilog "src/plla/gowin_pll_hdmi.v"
-    add_file -type verilog "src/plla/gowin_pll_snes.v"
+    if {$exact} {
+        add_file -type verilog "src/snes2hdmi_sd.v"
+        add_file -type verilog "src/plla/pll_snes_exact.v"
+    } else {
+        add_file -type verilog "src/snes2hdmi.v"
+        add_file -type verilog "src/plla/gowin_pll_27.v"
+        add_file -type verilog "src/plla/gowin_pll_hdmi.v"
+        add_file -type verilog "src/plla/gowin_pll_snes.v"
+    }
     add_file -type verilog "src/sdram_cl2_3ch.v"
     add_file -type verilog "src/usb_hid_host.v"
     add_file -type verilog "src/plla/pll_12.v"
-    set_option -output_base_name snestang_${dev}_${controller}
+    if {$exact} { set_option -output_base_name snestang_${dev}_${controller}_exact } else { set_option -output_base_name snestang_${dev}_${controller} }
 } elseif {$dev eq "mega60k"} {
     set_device GW5AT-LV60PG484AC1/I0 -device_version B
     if {$controller eq "snes"} {
@@ -90,14 +115,19 @@ if {$dev eq "nano20k"} {
     } else {
         error "Unknown controller $controller"
     }
-    add_file -type verilog "src/snes2hdmi.v"
-    add_file -type verilog "src/plla/gowin_pll_27.v"
-    add_file -type verilog "src/plla/gowin_pll_hdmi.v"
-    add_file -type verilog "src/plla/gowin_pll_snes.v"
+    if {$exact} {
+        add_file -type verilog "src/snes2hdmi_sd.v"
+        add_file -type verilog "src/plla/pll_snes_exact.v"
+    } else {
+        add_file -type verilog "src/snes2hdmi.v"
+        add_file -type verilog "src/plla/gowin_pll_27.v"
+        add_file -type verilog "src/plla/gowin_pll_hdmi.v"
+        add_file -type verilog "src/plla/gowin_pll_snes.v"
+    }
     add_file -type verilog "src/sdram_cl2_3ch.v"
     add_file -type verilog "src/usb_hid_host.v"
     add_file -type verilog "src/plla/pll_12.v"
-    set_option -output_base_name snestang_${dev}_${controller}
+    if {$exact} { set_option -output_base_name snestang_${dev}_${controller}_exact } else { set_option -output_base_name snestang_${dev}_${controller} }
 } elseif {$dev eq "console138k"} {
     set_device GW5AST-LV138PG484AC1/I0 -device_version B
     add_file src/boards/console138k.v
@@ -177,7 +207,13 @@ add_file -type verilog "src/spc700/muldiv.v"
 add_file -type verilog "src/spc700/spc700.v"
 add_file -type verilog "src/swram.v"
 add_file -type verilog "src/uart_tx_V2.v"
-add_file -type sdc "src/snestang.sdc"
+if {$exact && $dev eq "nano20k"} {
+    add_file -type sdc "src/snestang_nano_exact.sdc"
+} elseif {$exact} {
+    add_file -type sdc "src/snestang_exact.sdc"
+} else {
+    add_file -type sdc "src/snestang.sdc"
+}
 add_file -type gao -disable "src/mega138k/snestang.gao"
 
 set_option -synthesis_tool gowinsynthesis

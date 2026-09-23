@@ -3,7 +3,14 @@
 // parameter MCLK_PAL_FREQ = 2128137;
 // parameter ACLK_FREQ = 409600;            // original snes frequency, 533.33 samples per frame
 // parameter ACLK_FREQ = 412674;           // 537.33 samples per frame
+`ifdef EXACT_LOCK
+// EXACT LOCK (2026-09-23): the SNES is never paused for frame sync any more, so the APU
+// runs at its real rate (24.576 MHz / 6 equivalent). The +0.56% below only existed to
+// refill the audio lost during those pauses.
+parameter ACLK_FREQ = 409600;
+`else
 parameter ACLK_FREQ = 411904;           // 536.33 samples per frame
+`endif
 
 
 parameter V0VOLL = 8'h00;

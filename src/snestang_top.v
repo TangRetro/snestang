@@ -107,8 +107,38 @@ always @(posedge mclk) begin
         resetn <= 1'b1;
 end
 
-// rPLL for Tang Nano 20K
+`ifdef EXACT_LOCK
+// EXACT LOCK (2026-09-23): the HDMI clocks are an exact rational multiple of mclk
+// (clk_pixel = 1.25 x mclk), so snes2hdmi_sd.v needs only line buffers and never pauses
+// the SNES. See snes2hdmi_sd.v for the arithmetic.
 `ifdef PLL_R
+// Nano 20K: upstream's core rPLL unchanged, HDMI rPLL replaced (27 -> 135, /5 -> 27.0).
+assign clk27 = sys_clk;
+gowin_pll_snes pll_snes (
+    .clkin(sys_clk),
+    .clkout(fclk),              // 86.4
+    .clkoutp(fclk_p),           // 225-degrees shifted
+    .clkoutd(mclk)              // 21.6
+);
+pll_hdmi_nano_exact pll_hdmi (
+    .clkin(sys_clk), .clk_pixel(hclk), .clk_5x(hclk5), .lock()
+);
+`else
+// Console 60K / Primer 25K: one cascaded PLL pair off the 50 MHz crystal.
+assign clk27 = 1'b0;
+pll_snes_exact pll_snes (
+    .clkin(sys_clk),
+    .mclk(mclk),                // 21.484375
+    .fclk(fclk),                // 85.9375
+    .fclk_p(fclk_p),            // 180 degrees
+    .clk_5x(hclk5),             // 134.277
+    .clk_pixel(hclk),           // 26.855
+    .lock()
+);
+`endif
+
+// rPLL for Tang Nano 20K
+`elsif PLL_R
 
 // Clocks for Nano 20K
 assign clk27 = sys_clk;
@@ -606,6 +636,27 @@ wire [7:0] overlay_y;
 
 wire [7:0] dbg_dat_out_loader;
 
+`ifdef EXACT_LOCK
+// No frame-sync pause: the rasters are locked, so the SNES runs continuously.
+assign pause_snes_for_frame_sync = 1'b0;
+snes2hdmi_sd #(
+`ifdef PLL_R
+    .VIDEOID(204), .CLKFRQ(27000)
+`else
+    .VIDEOID(203), .CLKFRQ(26855)
+`endif
+) s2h(
+    .clk(mclk), .resetn(resetn),
+    .dotclk(dotclk), .hblank(~hblankn),.vblank(~vblankn),.rgb5(rgb_out),
+    .xs(x_out), .ys(y_out),
+    .overlay(overlay), .overlay_x(overlay_x), .overlay_y(overlay_y),
+    .overlay_color(overlay_color),
+    .audio_l(audio_l), .audio_r(audio_r), .audio_ready(audio_ready), .audio_en(audio_en),
+    .clk_pixel(hclk),.clk_5x_pixel(hclk5),
+    .tmds_clk_n(tmds_clk_n), .tmds_clk_p(tmds_clk_p),
+    .tmds_d_n(tmds_d_n), .tmds_d_p(tmds_d_p)
+);
+`else
 snes2hdmi s2h(
     .clk(mclk), .resetn(resetn), .snes_refresh(refresh),
     .pause_snes_for_frame_sync(pause_snes_for_frame_sync),
@@ -618,6 +669,7 @@ snes2hdmi s2h(
     .tmds_clk_n(tmds_clk_n), .tmds_clk_p(tmds_clk_p),
     .tmds_d_n(tmds_d_n), .tmds_d_p(tmds_d_p)
 );
+`endif
 
 iosys_bl616 #(.CORE_ID(2), .FREQ(21_484_000)) iosys (
     .clk(mclk), .hclk(hclk), .resetn(resetn),
