@@ -12,7 +12,13 @@ module DSPn(
     input [11:0] DP_ADDR,
     input DP_SEL,
     input [2:0] VER,    // 00-DSP1, 01-DSP2, 10-DSP3, 11-DSP4
-    input REV           //  1-DSP1B
+    input REV,          //  1-DSP1B
+
+    // Chip ROM load, in the usual 8 KB dspN.rom layout: 2048 program words of 3 bytes,
+    // then 1024 data words of 2 bytes, both little-endian. LOAD_START clears the counters.
+    input LOAD_START,
+    input LOAD_WE,
+    input [7:0] LOAD_DI
 );
 
 parameter ACC_A = 0;
@@ -364,42 +370,64 @@ always @(posedge CLK) begin
     end
 end
 
-// TODO: Both prom and drom are compressible. 
-//       There are a lot of duplicate and empty lines
+// Program ROM (2048 * 24) and data ROM (1024 * 16) hold the one chip the cartridge uses,
+// written by the loader before the game starts.
+reg [1:0]  ld_ph;           // byte within the current word
+reg        ld_data;         // 0: program words, 1: data words
+reg        ld_done;
+reg [15:0] ld_acc;
+reg [10:0] ld_pa;
+reg [9:0]  ld_da;
+reg        prog_we, data_we;
+reg [23:0] prog_wd;
+reg [15:0] data_wd;
+reg [10:0] prog_wa;
+reg [9:0]  data_wa;
 
-// Program ROM (8096 * 24, 11 BRAM blocks)
-// 0000: dsp1.rom
-// 04F2: dsp1b.rom
-// 09E5: dsp2.rom
-// 10B8: dsp3.rom
-// 16BD: dsp4.rom
-// 1D8B: st010.rom
-assign PROG_ROM_ADDR =  VER == 3'b000 && REV == 1'b0 ? 13'(PC) + {1'b0, 12'h000} : 
-                        VER == 3'b000 && REV == 1'b1 ? 13'(PC) + {1'b0, 12'h4F2} : 
-                        VER == 3'b001                ? 13'(PC) + {1'b0, 12'h9E5} : 
-                        VER == 3'b010                ? 13'(PC) + {1'b1, 12'h0B8} : 
-                        VER == 3'b011                ? 13'(PC) + {1'b1, 12'h6BD} : 
-                                                       13'(PC) + {1'b1, 12'hD8B};
-reg [23:0] PROG_ROM [8096] /* synthesis syn_ramstyle="block_ram" */;
-initial $readmemh("dsp11b23410_p.hex", PROG_ROM);
-always @(posedge CLK) PROG_ROM_Q <= PROG_ROM[PROG_ROM_ADDR];
+always @(posedge CLK) begin
+    prog_we <= 0;
+    data_we <= 0;
+    if (LOAD_START) begin
+        ld_ph <= 0; ld_data <= 0; ld_done <= 0; ld_pa <= 0; ld_da <= 0;
+    end else if (LOAD_WE && !ld_done) begin
+        if (!ld_data) begin
+            if (ld_ph == 2'd2) begin
+                prog_wd <= {LOAD_DI, ld_acc};
+                prog_wa <= ld_pa;
+                prog_we <= 1;
+                ld_ph <= 0;
+                ld_pa <= ld_pa + 1'd1;
+                if (&ld_pa) ld_data <= 1;
+            end else begin
+                if (ld_ph == 2'd0) ld_acc[7:0] <= LOAD_DI;
+                else               ld_acc[15:8] <= LOAD_DI;
+                ld_ph <= ld_ph + 1'd1;
+            end
+        end else begin
+            if (ld_ph == 2'd1) begin
+                data_wd <= {LOAD_DI, ld_acc[7:0]};
+                data_wa <= ld_da;
+                data_we <= 1;
+                ld_ph <= 0;
+                ld_da <= ld_da + 1'd1;
+                if (&ld_da) ld_done <= 1;
+            end else begin
+                ld_acc[7:0] <= LOAD_DI;
+                ld_ph <= 1;
+            end
+        end
+    end
+end
 
-// Data ROM (7168 * 16, 7 BRAM blocks)
-// 0000: dsp1.rom
-// 0400: dsp1b.rom
-// 0800: dsp2.rom
-// 0C00: dsp3.rom
-// 1000: dsp4.rom
-// 1400: st010.rom
-assign DATA_ROM_ADDR =  VER == 3'b000 && REV == 1'b0 ? 13'(RP[9:0]) + {1'b0,12'h000} :
-                        VER == 3'b000 && REV == 1'b1 ? 13'(RP[9:0]) + {1'b0,12'h400} : 
-                        VER == 3'b001                ? 13'(RP[9:0]) + {1'b0,12'h800} : 
-                        VER == 3'b010                ? 13'(RP[9:0]) + {1'b0,12'hC00} : 
-                        VER == 3'b011                ? 13'(RP[9:0]) + {1'b1,12'h000} : 
-                                                       13'(RP[10:0]) + {1'b1,12'h400};
-reg [15:0] DATA_ROM [7168] /* synthesis syn_ramstyle="block_ram" */;
-initial $readmemh("dsp11b23410_d.hex", DATA_ROM);
-always @(posedge CLK) DATA_ROM_Q <= DATA_ROM[DATA_ROM_ADDR];
+assign PROG_ROM_ADDR = {2'b00, PC};
+reg [23:0] PROG_ROM [2048] /* synthesis syn_ramstyle="block_ram" */;
+always @(posedge CLK) if (prog_we) PROG_ROM[prog_wa] <= prog_wd;
+always @(posedge CLK) PROG_ROM_Q <= PROG_ROM[PROG_ROM_ADDR[10:0]];
+
+assign DATA_ROM_ADDR = {3'b000, RP[9:0]};
+reg [15:0] DATA_ROM [1024] /* synthesis syn_ramstyle="block_ram" */;
+always @(posedge CLK) if (data_we) DATA_ROM[data_wa] <= data_wd;
+always @(posedge CLK) DATA_ROM_Q <= DATA_ROM[DATA_ROM_ADDR[9:0]];
 
 assign DATA_RAM_ADDR_A = VER[2] == 1'b0 ? {3'b000,DP[7:0]} : DP;
 assign DATA_RAM_ADDR_B = DP_SEL == 1'b1 && (WR_N == 1'b0 || RD_N == 1'b0) ? 

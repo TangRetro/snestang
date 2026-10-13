@@ -237,7 +237,11 @@ reg snes_start = 1'b0;
 wire pause_snes_for_frame_sync;
 
 wire [7:0] loader_do;
-wire loader_do_valid, loading, header_finished;
+wire loader_do_valid, header_finished;
+wire [7:0] loading_state;                   // from the MCU: 0 run, 1 game ROM, 3 chip ROM
+wire loading = loading_state[0];            // the SNES is held in reset
+wire chip_loading = loading_state[1];       // bytes go to the DSP's ROM, not to SDRAM
+reg chip_loading_r;
 
 reg [22:0] loader_addr = 0;
 
@@ -317,6 +321,8 @@ main #(.USE_DSPn(USE_DSPn), .USE_GSU(USE_GSU)) main (
     .AUDIO_L(audio_l), .AUDIO_R(audio_r), .AUDIO_READY(audio_ready), .AUDIO_EN(audio_en),
 
     .JOY1_P6(), .JOY2_P6(), .JOY2_P6_in(), .DOT_CLK_CE(DOT_CLK_CE), .EXT_RTC(),
+    .CHIP_LOAD_START(chip_loading & ~chip_loading_r),
+    .CHIP_LOAD_WE(chip_loading & loader_do_valid), .CHIP_LOAD_DI(loader_do),
     .SPC_MODE(), .IO_ADDR(), .IO_DAT(), .IO_WR(), 
 
     .DBG_SEL(dbg_sel), .DBG_REG(dbg_reg), .DBG_REG_WR(dbg_reg_wr), .DBG_DAT_IN(dbg_dat_in), 
@@ -364,7 +370,7 @@ always @(posedge mclk) begin
     end else begin
         
         // ROM read and load
-        if (loading && loader_do_valid && header_finished && loader_addr[0] 
+        if (loading && ~chip_loading && loader_do_valid && header_finished && loader_addr[0] 
             || ~loading && ~ROM_CE_N && rom_addr_sd != rom_addr) begin
             rom_addr_sd <= rom_addr;
             cpu_addr <= rom_addr;
@@ -509,13 +515,14 @@ smc_parser smc (
 
 reg [7:0] loader_do_r;
 reg loading_r;
+always @(posedge mclk) chip_loading_r <= chip_loading;
 always @(posedge mclk) begin
     if (~resetn) begin
         loading_r <= 0;
         loaded <= 0;
     end else begin
         loading_r <= loading;
-        if (loader_do_valid && header_finished) begin
+        if (loader_do_valid && header_finished && ~chip_loading) begin
             loader_addr <= loader_addr + 23'd1; 
             loader_do_r <= loader_do;
         end
@@ -625,7 +632,7 @@ iosys_bl616 #(.CORE_ID(2), .FREQ(21_484_000)) iosys (
     .overlay_color(overlay_color),
     .joy1(joy1_btns_ds2 | joy1_btns_snes | joy1_usb), .joy2(joy2_btns_ds2 | joy2_btns_snes | joy2_usb), .hid1(hid1), .hid2(hid2),
     .uart_tx(UART_TXD), .uart_rx(UART_RXD),
-    .rom_loading(loading), .rom_do(loader_do), .rom_do_valid(loader_do_valid)
+    .rom_loading(loading_state), .rom_do(loader_do), .rom_do_valid(loader_do_valid)
 );
 
 `else       // VERILATOR
@@ -634,8 +641,9 @@ iosys_bl616 #(.CORE_ID(2), .FREQ(21_484_000)) iosys (
 test_loader test_loader (
     .clk(mclk), .resetn(resetn),
     .dout(loader_do), .dout_valid(loader_do_valid),
-    .loading(loading), .fail()
+    .loading(loading_state[0]), .fail()
 );
+assign loading_state[7:1] = 0;
 
 // test audio sink: FIFO-like rate limiting to sound sample generation
 reg [3:0] sample_counter = 0;

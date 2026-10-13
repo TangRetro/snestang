@@ -85,6 +85,10 @@ module main (
 
 	input      [64:0] EXT_RTC,
 
+	input             CHIP_LOAD_START,	// DSP ROM load from the MCU
+	input             CHIP_LOAD_WE,
+	input       [7:0] CHIP_LOAD_DI,
+
 	// input             GG_EN,
 	// input     [128:0] GG_CODE,
 	// input             GG_RESET,
@@ -321,7 +325,9 @@ DSP_LHRomMap #(.USE_DSPn(USE_DSPn)) DSP_LHRomMap
 	.ROM_MASK(ROM_MASK),
 	.BSRAM_MASK(RAM_MASK),
 
-	.EXT_RTC(EXT_RTC)
+	.EXT_RTC(EXT_RTC),
+
+	.CHIP_LOAD_START(CHIP_LOAD_START), .CHIP_LOAD_WE(CHIP_LOAD_WE), .CHIP_LOAD_DI(CHIP_LOAD_DI)
 );
 end else begin
 	assign DLH_DO = 0;

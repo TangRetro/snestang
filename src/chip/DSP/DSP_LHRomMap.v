@@ -39,7 +39,11 @@ module DSP_LHRomMap #(parameter USE_DSPn=1)(
   input [23:0] ROM_MASK,
   input [23:0] BSRAM_MASK,
   
-  input [64:0] EXT_RTC
+  input [64:0] EXT_RTC,
+
+  input CHIP_LOAD_START,      // DSP ROM load from the MCU (see DSPn)
+  input CHIP_LOAD_WE,
+  input [7:0] CHIP_LOAD_DI
 );
 
 reg [23:0] CART_ADDR;
@@ -195,7 +199,8 @@ if (USE_DSPn) begin
     .A0(DSP_A0), .DI(DI), .DO(DSP_DO),
     .CS_N(DSP_CS_N), .RD_N(CPURD_N), .WR_N(CPUWR_N),
     .DP_ADDR(CA[11:0]), .DP_SEL(DP_SEL),
-    .VER(MAP_DSP_VER), .REV(~MAP_CTRL[2])
+    .VER(MAP_DSP_VER), .REV(~MAP_CTRL[2]),
+    .LOAD_START(CHIP_LOAD_START), .LOAD_WE(CHIP_LOAD_WE), .LOAD_DI(CHIP_LOAD_DI)
   );
 end
 endgenerate
